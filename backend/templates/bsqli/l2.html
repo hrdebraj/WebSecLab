@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Blind SQLi · Level 2{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">Blind SQLi</span>
+  <span class="crumb">Level 2 — Time-Based Product Search</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 2 · Time-Based Product Search</h1>
+  <div class="sub">
+    A product category API always responds the same way:
+    <code class="inline">{"status":"ok"}</code>. No data. No errors. But the
+    server <em>does</em> spend time executing your query.
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-medium">medium</span>
+    <span class="pill">goal: read products.secret_note for the 'accessories' row</span>
+    <span class="pill">oracle: response time</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <div id="tab-challenge" class="tab-panel active">
+    <div class="card">
+      <h3>Search by category</h3>
+      <p class="muted">Endpoint: <code class="inline">GET /bsqli/l2/search?category=&lt;c&gt;</code>.
+      The response body is always identical and does not disclose row data.</p>
+      <form onsubmit="event.preventDefault(); doSearch();">
+        <div class="form-row">
+          <div><label>Category</label><input type="text" id="catInput" value="kitchen"></div>
+          <div style="flex:0;"><button class="btn btn-primary">Search</button></div>
+        </div>
+      </form>
+      <pre id="searchOut" style="margin-top:14px;">(no request yet)</pre>
+      <p class="muted" style="margin-top:8px;">The panel above shows the total wall-clock time of the round-trip.
+      When you inject a <code class="inline">SLEEP(n)</code> that executes, the time jumps.</p>
+    </div>
+
+    <div class="card">
+      <h3>Target</h3>
+      <p class="muted">One row in the <code class="inline">products</code> table has
+      <code class="inline">secret_note</code> set to a flag. Normal users cannot see it.
+      Extract it using timing differences.</p>
+    </div>
+  </div>
+
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Confirm the injection point silently</h4>
+      The response body never changes. You can't rely on error messages or content diffs. What's left?
+      <strong>Time.</strong>
+      <ol>
+        <li>Try <code class="inline">category=kitchen</code> — baseline time.</li>
+        <li>Try <code class="inline">category=kitchen' AND SLEEP(0)-- </code> — should match baseline.</li>
+        <li>Try <code class="inline">category=kitchen' AND SLEEP(3)-- </code> — should add ~3 seconds.</li>
+      </ol>
+      If step 3 is slow, injection confirmed. If not, revisit quoting.
+      <details class="hint"><summary>💡 how many rows fire SLEEP?</summary>
+        <div>When you write <code class="inline">SELECT ... WHERE category='kitchen' AND SLEEP(3)</code>,
+        MySQL evaluates <code class="inline">SLEEP(3)</code> <em>once per matching row</em>. That can turn
+        a 3-second delay into 15. Aim your payload so it runs the sleep exactly once.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Make the oracle conditional</h4>
+      You want:
+      <blockquote style="border-left:3px solid var(--accent-2);padding-left:10px;margin:6px 0;color:var(--text-dim);">
+        "If my test is true, sleep; if false, don't."
+      </blockquote>
+      The classic pattern uses <code class="inline">IF(cond, SLEEP(n), 0)</code> in MySQL.
+      Wrap your boolean inside and observe the delay.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Pin the sleep to a single row</h4>
+      To avoid multiplying the delay, scope your condition so only a constant returns from the outer
+      query. Two common tricks:
+      <ul>
+        <li>Make the outer predicate match zero or one row (<code class="inline">AND id=1</code>).</li>
+        <li>Or wrap everything in a <code class="inline">UNION SELECT IF(cond, SLEEP(3), 0)</code> with a
+            predicate that matches exactly one row.</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Find the flag row first</h4>
+      You don't know which row holds the flag. Use the oracle to find it:
+      <ul>
+        <li>Is there a row where <code class="inline">secret_note LIKE 'FLAG%'</code>?</li>
+        <li>What is its <code class="inline">id</code>? Binary-search through the id range.</li>
+        <li>What is <code class="inline">LENGTH(secret_note)</code> for that row?</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Character-by-character extraction</h4>
+      Now loop: for each position <em>i</em> from 1 to length, test
+      <code class="inline">SUBSTRING(secret_note, i, 1) = '?'</code> for every printable ASCII byte —
+      or binary-search via <code class="inline">ASCII(SUBSTRING(...))</code>.
+      Sleep for, say, 2 s on match and 0 on miss. Don't go below 1 s because the DB has noise.
+      <details class="hint"><summary>💡 scripting the loop</summary>
+        <div>This is easier in a small Python script than in Burp Intruder because Burp's default
+        wait thresholds aren't tuned for binary searching. Use Python <code class="inline">requests</code>
+        + <code class="inline">time.perf_counter()</code> and set a clear threshold (e.g. response &gt; 1.5s ⇒ true).</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Stabilise against jitter</h4>
+      Containers introduce noise. Repeat each probe 2-3× and take the minimum, or use a sleep long
+      enough that noise cannot misclassify. Too short → false negatives. Too long → slow extraction.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Reflection</h4>
+      Time-based SQLi is the oracle of last resort — slow but universal. A defender can detect it via
+      abnormally long queries or via WAF rules matching on SLEEP/BENCHMARK. What would you do at
+      application level to make it impossible?
+    </div>
+  </div>
+
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Endpoint (vulnerable)</h3>
+<pre>@app.route("/bsqli/l2/search")
+def bsqli_l2_search():
+    cat = request.args.get("category", "")
+    sql = f"SELECT name, price FROM products WHERE category='{cat}'"
+    start = time.time()
+    try:    raw_execute(sql)
+    except: pass
+    elapsed = time.time() - start
+    return jsonify({"status": "ok", "server_elapsed_ms": int(elapsed * 1000)})</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function doSearch() {
+  const c = document.getElementById('catInput').value;
+  const out = document.getElementById('searchOut');
+  out.textContent = '... loading ...';
+  const t0 = performance.now();
+  const r = await fetch('/bsqli/l2/search?category=' + encodeURIComponent(c));
+  const data = await r.json();
+  const t1 = performance.now();
+  out.textContent = 'HTTP ' + r.status
+    + '\nBrowser RTT: ' + (t1 - t0).toFixed(0) + ' ms'
+    + '\nResponse: ' + JSON.stringify(data, null, 2);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}DOM XSS · Level 2{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">DOM XSS</span>
+  <span class="crumb">Level 2 — Naive Tag Filter</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 2 · Naive Tag Filter</h1>
+  <div class="sub">
+    A "search greeting" widget takes a <code class="inline">q</code> query-string
+    parameter and greets the user. The developer, aware of XSS, sprinkled in a
+    regex that strips <code class="inline">&lt;script&gt;</code> tags. Good enough?
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-medium">medium</span>
+    <span class="pill">goal: fire JS despite the filter</span>
+    <span class="pill">technique: filter bypass</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <div id="tab-challenge" class="tab-panel active">
+
+    <div class="card">
+      <h3>Search greeting</h3>
+      <form onsubmit="event.preventDefault(); updateQuery();">
+        <div class="form-row">
+          <div><label>Your search term (<code class="inline">?q=</code>)</label><input type="text" id="qInput"></div>
+          <div style="flex:0;"><button class="btn btn-primary">Go</button></div>
+        </div>
+      </form>
+      <div style="border:1px dashed var(--line);padding:14px;border-radius:8px;background:var(--bg-0);margin-top:10px;">
+        <div style="color:var(--text-dim);font-size:12px;">Greeting:</div>
+        <div id="greet" style="margin-top:6px;font-family:var(--mono);min-height:26px;"></div>
+      </div>
+      <p class="muted" style="margin-top:8px;">
+        Current filter: strips <code class="inline">&lt;script&gt;...&lt;/script&gt;</code>
+        (case-insensitive) before rendering. See <em>Source</em> tab.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Try these</h3>
+      <ul>
+        <li><a href="{{ url_for('domxss_l2') }}?q=guest">?q=guest</a></li>
+        <li><a href="{{ url_for('domxss_l2') }}?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E">?q=&lt;script&gt;alert(1)&lt;/script&gt;</a> (filtered)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Recon the filter</h4>
+      Read the JS in <em>Source</em>. It applies a regex to remove &lt;script&gt;…&lt;/script&gt; pairs
+      (case-insensitive) before inserting into <code class="inline">innerHTML</code>.
+      List every weakness you can think of just by reading that regex.
+      <details class="hint"><summary>💡 what to look for</summary>
+        <div>
+          <ul>
+            <li>Only one tag is blacklisted. What about others?</li>
+            <li>Regex isn't recursive: what if tags are nested, e.g. <code class="inline">&lt;scr&lt;script&gt;ipt&gt;</code>?</li>
+            <li>Can event handlers on non-script tags still fire?</li>
+            <li>Whitespace, uppercase, URL encoding — does the filter see the raw URL or decoded value?</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Baseline: plain text</h4>
+      <code class="inline">?q=guest</code> — greets you. Confirm it is inserted via
+      <code class="inline">innerHTML</code> (render an HTML tag like <code class="inline">?q=&lt;b&gt;x&lt;/b&gt;</code>
+      to see the sink is HTML-rendering).
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Classic DOM payloads</h4>
+      Which DOM sinks never run <code class="inline">&lt;script&gt;</code> anyway? Right — the same rule
+      as Level 1. So bypass is about choosing <strong>any tag that auto-fires an event handler</strong>:
+      <ul>
+        <li><code class="inline">&lt;img&gt;</code> with <code class="inline">onerror</code></li>
+        <li><code class="inline">&lt;svg&gt;</code> with <code class="inline">onload</code></li>
+        <li><code class="inline">&lt;iframe&gt;</code> with <code class="inline">onload</code></li>
+        <li><code class="inline">&lt;body&gt;</code> with <code class="inline">onload</code> (only fires inside certain contexts)</li>
+      </ul>
+      Try one in <code class="inline">?q=</code>. Did it fire?
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Regex recursion pitfall</h4>
+      Even if the filter <em>also</em> blacklisted <code class="inline">onerror</code> or
+      <code class="inline">img</code>, a non-recursive <code class="inline">replace</code> pass can
+      miss nested patterns. Feed it something it removes once to produce a working tag:
+      <code class="inline">&lt;scri&lt;script&gt;pt&gt;...</code>. Useful to know for other labs.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Capture the flag</h4>
+      As before, run <code class="inline">alert(window.FLAG)</code> or call
+      <code class="inline">revealFlag()</code>. The flag box only appears after the payload fires.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Burp workflow</h4>
+      Build the payload in Repeater or in Burp's Chromium with DOM Invader enabled. DOM Invader
+      marks the source (<code class="inline">URLSearchParams</code>) and sink
+      (<code class="inline">innerHTML</code>) and annotates which characters are required by the
+      surrounding context.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Reflection</h4>
+      Blacklists are a losing game. Why is an <em>allow-list</em> (and a library that parses HTML
+      properly rather than regexes it) the only sensible approach?
+    </div>
+  </div>
+
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Vulnerable script (inline)</h3>
+<pre>function naiveFilter(s) {
+  // Developer thought removing &lt;script&gt; tags was enough.
+  return s.replace(/&lt;script[^&gt;]*&gt;[\\s\\S]*?&lt;\\/script&gt;/gi, '');
+}
+
+function render() {
+  var q = new URLSearchParams(location.search).get('q') || 'guest';
+  document.getElementById('greet').innerHTML = 'Hello, ' + naiveFilter(q) + '!';
+}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.FLAG = "FLAG{dom_xss_filter_bypass}";
+window.revealFlag = function () {
+  if (document.getElementById('flagBox')) return;
+  const box = document.createElement('div');
+  box.id = 'flagBox';
+  box.className = 'flag-box';
+  box.innerHTML = '<div class="label">Captured flag</div><div class="val">'
+    + window.FLAG.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</div>';
+  document.querySelector('.content').appendChild(box);
+};
+
+// ---- INTENTIONALLY VULNERABLE FILTER + SINK ----
+function naiveFilter(s) {
+  return s.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+}
+function render() {
+  var q = new URLSearchParams(location.search).get('q') || 'guest';
+  var out = document.getElementById('greet');
+  if (out) out.innerHTML = 'Hello, ' + naiveFilter(q) + '!';
+}
+
+function updateQuery() {
+  var q = document.getElementById('qInput').value;
+  var u = new URL(location.href);
+  u.searchParams.set('q', q);
+  location.href = u.toString();
+}
+
+render();
+</script>
+{% endblock %}

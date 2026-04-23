@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Blind SQLi · Level 1{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">Blind SQLi</span>
+  <span class="crumb">Level 1 — Boolean-Based Login Probe</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 1 · Boolean-Based Login Probe</h1>
+  <div class="sub">
+    A seemingly harmless "check if username is available" endpoint returns only
+    <code class="inline">{"exists":true}</code> or <code class="inline">{"exists":false}</code>.
+    No errors. No result rows leak. But the answer changes based on a query you control.
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-easy">easy</span>
+    <span class="pill">goal: extract admin's api_key</span>
+    <span class="pill">burp: Repeater + Intruder</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <div id="tab-challenge" class="tab-panel active">
+    <div class="card">
+      <h3>Username availability</h3>
+      <p class="muted">Endpoint: <code class="inline">GET /bsqli/l1/check?username=&lt;u&gt;</code>.
+      Response is JSON with a single boolean field.</p>
+      <form id="avail-form" onsubmit="event.preventDefault(); doCheck();">
+        <div class="form-row">
+          <div><label>Username to check</label><input type="text" id="availUsername" value="alice"></div>
+          <div style="flex:0;"><button class="btn btn-primary">Check</button></div>
+        </div>
+      </form>
+      <pre id="availOut" style="margin-top:14px;">(no request yet)</pre>
+    </div>
+
+    <div class="card">
+      <h3>Target</h3>
+      <p class="muted">The <code class="inline">admin</code> user has a column
+      <code class="inline">api_key</code> that begins with <code class="inline">FLAG{</code>.
+      Extract the full string using the availability endpoint as your only oracle.</p>
+    </div>
+  </div>
+
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Confirm the injection point</h4>
+      Hit the endpoint with:
+      <ol>
+        <li><code class="inline">username=alice</code> → <code class="inline">{"exists":true}</code></li>
+        <li><code class="inline">username=zzz</code>   → <code class="inline">{"exists":false}</code></li>
+        <li><code class="inline">username=alice'</code> → ?</li>
+        <li><code class="inline">username=alice''</code> → ?</li>
+      </ol>
+      If request 3 returns <code class="inline">false</code> and request 4 returns <code class="inline">true</code>,
+      you're inside a quoted string literal: <code class="inline">WHERE username='&lt;x&gt;'</code>.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Craft the oracle</h4>
+      Design a value that closes the quote and plugs in a boolean expression:
+      <code class="inline">alice' AND &lt;test&gt; -- </code>.
+      If <code class="inline">&lt;test&gt;</code> is true, <code class="inline">exists</code> stays true;
+      if false, it flips to false. That asymmetry is your oracle.
+      <details class="hint"><summary>💡 sanity payloads</summary>
+        <div>
+          <ul>
+            <li><code class="inline">alice' AND 1=1-- </code> → true</li>
+            <li><code class="inline">alice' AND 1=2-- </code> → false</li>
+          </ul>
+          If both come back true, your injection doesn't parse. If both come back false,
+          you broke the query.
+        </div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Pivot to another table</h4>
+      The target column is in <code class="inline">users</code> but on a different row. Use a subquery:
+      <code class="inline">&lt;test&gt;</code> becomes something like
+      <code class="inline">(SELECT ... FROM users WHERE username='admin')</code>.
+      Your oracle fires only when the inner expression is truthy.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Extract one character</h4>
+      Use <code class="inline">SUBSTRING()</code> (or <code class="inline">MID()</code>) plus either
+      <code class="inline">ASCII()</code> or a direct equality comparison to test one character at a time.
+      Start with the length: is the length of <code class="inline">api_key</code> greater than 0, 1, 2, ... ?
+      Use binary search to save requests.
+      <details class="hint"><summary>💡 discovery sequence</summary>
+        <div>
+          <ol>
+            <li>Length discovery: <code class="inline">LENGTH((SELECT api_key FROM users WHERE username='admin')) &gt; N</code></li>
+            <li>Character test: <code class="inline">SUBSTRING((SELECT api_key ...),1,1) = 'F'</code></li>
+            <li>Or binary: <code class="inline">ASCII(SUBSTRING(...,1,1)) &gt; 77</code></li>
+          </ol>
+        </div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Automate with Burp Intruder</h4>
+      Send the probing request to Intruder. Use <em>Sniper</em> mode with two positions:
+      one for the index, one for the ASCII test value. Configure <em>Grep - Match</em> on the string
+      <code class="inline">"exists":true</code> to classify responses.
+      <details class="hint"><summary>💡 Intruder payload types</summary>
+        <div>Use the <em>Numbers</em> payload type: first position iterates 1..60 (length), second iterates 32..126 (printable ASCII).
+        Alternatively, write a Python helper outside Burp — many classrooms find <code class="inline">requests</code> clearer than Intruder for blind attacks.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Assemble</h4>
+      Join all recovered characters. The flag starts with <code class="inline">FLAG{</code> and ends with <code class="inline">}</code>.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Reflection</h4>
+      A single boolean leak is enough to exfiltrate an entire table. What mitigation(s) would
+      completely stop this? What mitigations only slow it down?
+    </div>
+  </div>
+
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Endpoint (vulnerable)</h3>
+<pre>@app.route("/bsqli/l1/check")
+def bsqli_l1_check():
+    username = request.args.get("username", "")
+    sql = f"SELECT id FROM users WHERE username='{username}'"
+    rows = raw_execute(sql)
+    return jsonify({"exists": len(rows) > 0})</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function doCheck() {
+  const u = document.getElementById('availUsername').value;
+  const out = document.getElementById('availOut');
+  out.textContent = '... loading ...';
+  const r = await fetch('/bsqli/l1/check?username=' + encodeURIComponent(u));
+  out.textContent = 'HTTP ' + r.status + '\n' + JSON.stringify(await r.json(), null, 2);
+}
+</script>
+{% endblock %}

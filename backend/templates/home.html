@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}WebSecLab · Home{% endblock %}
+{% block breadcrumb %}<span class="crumb">Home</span>{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>WebSecLab</h1>
+  <p>
+    A contained playground where you learn three high-impact web attacks:
+    <strong>2nd-Order SQL Injection</strong>, <strong>Blind SQL Injection</strong>
+    and <strong>DOM-based XSS</strong>. Each category has three progressively
+    harder levels. Every level ships with a guided walkthrough that
+    <em>teaches the methodology, not the payload</em>.
+  </p>
+  <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+    <span class="pill">9 Challenges</span>
+    <span class="pill">Burp-Friendly</span>
+    <span class="pill">Flags to Capture</span>
+    <span class="pill">Full Reset on Demand</span>
+  </div>
+</section>
+
+<div class="cat-grid">
+  {% for cat in MENU %}
+  <a class="cat-card" href="{{ url_for(cat.id ~ '_l1') }}">
+    <div style="font-size:11px;color:var(--text-dim);letter-spacing:.1em;">CATEGORY</div>
+    <h3>{{ cat.title }}</h3>
+    <p>
+      {% if cat.id == 'sqli2' %}
+        Inject once, exploit later. Payloads survive in the database and
+        fire when the server trusts its own data.
+      {% elif cat.id == 'bsqli' %}
+        No errors, no output — infer data byte-by-byte using boolean and
+        time-based oracles.
+      {% else %}
+        Poison the DOM directly from the URL. The server never sees the
+        payload; the browser executes it.
+      {% endif %}
+    </p>
+    <div class="levels">
+      {% for lvl in cat.levels %}<span>{{ lvl.difficulty }}</span>{% endfor %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="card" style="margin-top:24px;">
+  <h2>How to use this lab</h2>
+  <ol style="line-height:1.9;">
+    <li>Start the stack: <code class="inline">docker compose up --build</code></li>
+    <li>Visit <a href="/">http://localhost:8080</a></li>
+    <li>Configure your browser (Firefox recommended) to proxy through Burp on <code class="inline">127.0.0.1:8080</code>.
+      Since the lab is also on port 8080, either change Burp's listener or use <code class="inline">localhost:8080</code> directly with FoxyProxy.</li>
+    <li>Open the first level of any category from the sidebar.</li>
+    <li>Read <strong>Challenge</strong>, then work through <strong>Walkthrough</strong> step by step.
+      Use Burp Repeater / Intruder / DOM Invader as each level requires.</li>
+    <li>When stuck, expand the <em>hint</em> accordions — they nudge you without spoiling.</li>
+    <li>Click <strong>Reset Lab Data</strong> in the sidebar any time to re-seed.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>⚠️ Warning</h2>
+  <p class="muted">
+    This application is <strong>deliberately insecure</strong>. Do not expose
+    it to untrusted networks. Run only inside Docker, on an isolated lab LAN
+    or a single developer host.
+  </p>
+</div>
+{% endblock %}

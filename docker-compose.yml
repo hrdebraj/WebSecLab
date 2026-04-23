@@ -1,0 +1,45 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: webseclab_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootlabpass
+      MYSQL_DATABASE: weblab
+      MYSQL_USER: labuser
+      MYSQL_PASSWORD: labpass
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootlabpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - weblab_net
+
+  web:
+    build: ./backend
+    container_name: webseclab_web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_USER: labuser
+      DB_PASSWORD: labpass
+      DB_NAME: weblab
+      FLASK_SECRET: change_me_for_lab_only
+    ports:
+      - "8080:5000"
+    networks:
+      - weblab_net
+
+networks:
+  weblab_net:
+    driver: bridge
+
+volumes:
+  db_data:

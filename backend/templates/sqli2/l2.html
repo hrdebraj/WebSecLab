@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}2nd-Order SQLi · Level 2{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">2nd Order SQLi</span>
+  <span class="crumb">Level 2 — Stored Comment Moderation</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 2 · Stored Comment Moderation</h1>
+  <div class="sub">
+    Users post product comments. A moderator inspects comments and the app
+    runs a per-author statistics query. Can you make that second query leak data?
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-medium">medium</span>
+    <span class="pill">goal: leak admin's private_note</span>
+    <span class="pill">techniques: UNION, error</span>
+    <span class="pill">burp: Repeater + rendered response</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <!-- CHALLENGE -->
+  <div id="tab-challenge" class="tab-panel active">
+
+    <div class="card">
+      <h3>Post a comment</h3>
+      <form method="POST" action="{{ url_for('sqli2_l2_post') }}">
+        <div class="form-row">
+          <div><label>Author name</label><input type="text" name="author" required></div>
+        </div>
+        <label>Comment</label>
+        <textarea name="content" required></textarea>
+        <div style="margin-top:10px;"><button class="btn btn-primary">Post</button></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>All comments</h3>
+      <p class="muted">Clicking <em>Moderate</em> simulates the admin opening the comment.
+      This runs an internal per-author statistics query.</p>
+      <table>
+        <thead><tr><th>ID</th><th>Author</th><th>Content</th><th>Posted</th><th></th></tr></thead>
+        <tbody>
+        {% for c in comments %}
+          <tr>
+            <td>{{ c.id }}</td>
+            <td><code class="inline">{{ c.author }}</code></td>
+            <td>{{ c.content }}</td>
+            <td class="muted">{{ c.created_at }}</td>
+            <td><a class="btn btn-sm" href="{{ url_for('sqli2_l2_moderate', cid=c.id) }}">Moderate</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if moderation_result %}
+    <div class="card">
+      <h3>Moderation result</h3>
+      <p class="muted">Author of comment #{{ moderation_result.comment.author }} inspected.</p>
+<pre>{{ moderation_result.sql }}</pre>
+      <h3>Rows returned</h3>
+<pre>{{ moderation_result.rows }}</pre>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- WALKTHROUGH -->
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Spot the two sinks</h4>
+      Posting a comment stores <code class="inline">author</code> and <code class="inline">content</code>.
+      Clicking <em>Moderate</em> triggers a <em>second</em> server-side query that uses one of those fields.
+      Your first job: figure out <strong>which field</strong> is re-used and <strong>how</strong>.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Follow the behaviour</h4>
+      Post two comments with different authors. Moderate each one. Observe the
+      <em>Moderation result</em> panel — does its output depend on the <em>author</em> value, the
+      <em>content</em> value, or both?
+      <details class="hint"><summary>💡 Burp tip</summary>
+        <div>In Burp <em>HTTP history</em> inspect the response of <code class="inline">/sqli2/l2/moderate/&lt;id&gt;</code>.
+        You'll see an SQL string echoed (for teaching purposes) — but also observe how the COUNT and MAX change.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Ladder the injection on <code class="inline">author</code></h4>
+      Post comments with progressively trickier authors. Don't try UNION right away.
+      <ol>
+        <li>Author = <code class="inline">x</code> → baseline</li>
+        <li>Author = <code class="inline">x'</code> → does moderation error?</li>
+        <li>Author = <code class="inline">x''</code> → normal again?</li>
+        <li>Author = <code class="inline">x' OR '1'='1</code> → a boolean game</li>
+      </ol>
+      Each post creates a new comment you can moderate individually. Reset the lab
+      between runs if the table gets too noisy.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Confirm the query shape</h4>
+      Based on the error / row counts, write down what you believe the vulnerable query looks like.
+      <details class="hint"><summary>💡 likely shape</summary>
+        <div><code class="inline">SELECT COUNT(*) AS total, MAX(id) AS last_id FROM comments WHERE author='&lt;here&gt;'</code></div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Pick a technique</h4>
+      You have two classic roads once you control a SELECT:
+      <ul>
+        <li><strong>UNION-based</strong>: append a UNION SELECT that returns data from another table.
+            The column count of the original query matters.</li>
+        <li><strong>Error-based</strong>: force the database to raise an error whose text includes the value you want.
+            MySQL makes this easy with functions like <code class="inline">EXTRACTVALUE</code> or <code class="inline">UPDATEXML</code>.</li>
+      </ul>
+      The outer query here uses <code class="inline">COUNT(*), MAX(id)</code> — how many columns, what types?
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Build a test payload (conceptually)</h4>
+      Before writing the final payload, sketch it:
+      <code class="inline">'&nbsp;UNION&nbsp;SELECT&nbsp;&lt;col1&gt;,&nbsp;&lt;col2&gt;&nbsp;FROM&nbsp;users&nbsp;WHERE&nbsp;&lt;pred&gt;--&nbsp;</code>.
+      What integer-castable value pair can you grab from <code class="inline">users</code> to place in col1 & col2?
+      <details class="hint"><summary>💡 column-count gotcha</summary>
+        <div>The outer SELECT lists two aggregate columns. Your UNION SELECT must also return exactly two columns.
+        MySQL will allow non-numeric data in aggregate slots if the query doesn't use GROUP BY.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Extract the target</h4>
+      The admin has a <code class="inline">private_note</code>. Design your payload to read that column.
+      Post a comment whose <em>author</em> contains your payload; moderate that comment; read the response.
+      <details class="hint"><summary>💡 what to read on success</summary>
+        <div>Look at the <em>Rows returned</em> panel under "Moderation result". A properly-crafted UNION
+        will list two rows: the original aggregate row AND your injected row.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">08</span>Why does parameterisation not save us?</h4>
+      The INSERT into <code class="inline">comments</code> is parameterised. Yet we still own the DB.
+      Summarise in your own words how trust boundaries can be broken <em>after</em> data enters safe storage.
+    </div>
+  </div>
+
+  <!-- SOURCE -->
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Comment post (safe)</h3>
+<pre>cur.execute("INSERT INTO comments (author, content) VALUES (%s,%s)", (author, content))</pre>
+      <h3>Moderate (vulnerable)</h3>
+<pre>row = query("SELECT author, content FROM comments WHERE id=%s", (cid,), one=True)
+author = row["author"]
+sql = ("SELECT COUNT(*) AS total, MAX(id) AS last_id "
+       f"FROM comments WHERE author='{author}'")
+rows = raw_execute(sql)</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

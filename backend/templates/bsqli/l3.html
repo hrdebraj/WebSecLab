@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Blind SQLi · Level 3{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">Blind SQLi</span>
+  <span class="crumb">Level 3 — Cookie-Based Tracking</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 3 · Cookie-Based Tracking</h1>
+  <div class="sub">
+    The app sets a <code class="inline">track</code> cookie and pings
+    <code class="inline">/bsqli/l3/ping</code> every page-load. The ping's body is empty.
+    The only signal is the <code class="inline">X-Status</code> response header:
+    <code class="inline">OK</code> or <code class="inline">UNKNOWN</code>.
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-hard">hard</span>
+    <span class="pill">goal: extract admin's password from users table</span>
+    <span class="pill">channel: header-based oracle</span>
+    <span class="pill">burp: Proxy + Repeater mandatory</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <div id="tab-challenge" class="tab-panel active">
+    <div class="card">
+      <h3>Tracking ping</h3>
+      <p class="muted">
+        On first visit, the server sets <code class="inline">track=tk_alice</code>. Every
+        hit of <code class="inline">/bsqli/l3/ping</code> looks up the cookie value in a
+        <code class="inline">tracking</code> table and returns an empty response (HTTP 204)
+        with either <code class="inline">X-Status: OK</code> (row found) or
+        <code class="inline">X-Status: UNKNOWN</code> (nothing matched).
+      </p>
+      <div class="form-row">
+        <div style="flex:0;"><button class="btn btn-primary" onclick="doPing()">Ping now</button></div>
+      </div>
+      <pre id="pingOut">(no request yet)</pre>
+      <p class="muted" style="margin-top:8px;">
+        Because this is a header-only oracle, the JS <code class="inline">fetch</code> above
+        will only see the status code. Send the request through Burp to read the
+        <code class="inline">X-Status</code> header.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Target</h3>
+      <p class="muted">Extract the <code class="inline">password</code> column of the
+      <code class="inline">admin</code> user from the <code class="inline">users</code> table
+      — not the tracking table. You'll need a <em>cross-table</em> blind read.</p>
+    </div>
+  </div>
+
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Open Burp and intercept the ping</h4>
+      Browse to this page with the Burp proxy on. In <em>HTTP history</em> locate the request to
+      <code class="inline">/bsqli/l3/ping</code>. Notice the <code class="inline">Cookie: track=tk_alice</code>
+      header and the response header <code class="inline">X-Status: OK</code>. Send to Repeater.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Find the injection context</h4>
+      In Repeater modify the cookie value to:
+      <ol>
+        <li><code class="inline">tk_alice</code> → <code class="inline">X-Status: OK</code></li>
+        <li><code class="inline">tk_aliceZZZ</code> → <code class="inline">UNKNOWN</code></li>
+        <li><code class="inline">tk_alice'</code> → ?</li>
+        <li><code class="inline">tk_alice''</code> → ?</li>
+      </ol>
+      Cookie single-quote probing reveals a string-literal context. Burp's cookie editor is the
+      cleanest way to send metacharacters without URL encoding.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Build the boolean oracle</h4>
+      Swap the cookie to
+      <code class="inline">tk_alice' AND 1=1-- </code> (true) and
+      <code class="inline">tk_alice' AND 1=2-- </code> (false).
+      Observe <code class="inline">OK</code> vs <code class="inline">UNKNOWN</code>.
+      <details class="hint"><summary>💡 trailing spaces matter</summary>
+        <div>MySQL's line comment is <code class="inline">-- </code> (two dashes <em>followed by a whitespace</em>) or <code class="inline">#</code>. In cookie headers a single space is fine.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Cross the table boundary</h4>
+      The current query hits <code class="inline">tracking</code>, not <code class="inline">users</code>.
+      Your condition must reference the <code class="inline">users</code> table through a subquery:
+      <code class="inline">(SELECT ... FROM users WHERE username='admin')</code>.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Length then content</h4>
+      Get the password length first (binary search). Then pull one character at a time using
+      <code class="inline">SUBSTRING</code> + <code class="inline">ASCII</code>. Each "byte" is one
+      HTTP request whose only evidence is a response header — that's the point of the exercise.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Automate (two options)</h4>
+      <ul>
+        <li><strong>Burp Intruder</strong>: send the Repeater request to Intruder, set the cookie
+            value as the attack position, use <em>Cluster bomb</em> for (index, ascii) pairs, and
+            in <em>Options → Grep-Extract</em> extract the <code class="inline">X-Status</code> header
+            so you can sort results.</li>
+        <li><strong>Python</strong>: <code class="inline">requests.get(url, cookies={'track': payload})</code>
+            and check <code class="inline">r.headers['X-Status']</code>. Much faster for long extractions.</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Verify</h4>
+      Once you have the password, log in through <code class="inline">/login</code> as
+      <code class="inline">admin</code>. If login succeeds you have completed the level — the flag
+      for this level is the plaintext password you recovered.
+      <details class="hint"><summary>💡 can't log in?</summary>
+        <div>Double-check case sensitivity and special characters. The password contains a mixed-case
+        string with at least one digit and one punctuation mark.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">08</span>Reflection</h4>
+      Blind signals can hide in almost anywhere: headers, cache-control, cookies, error pages that
+      differ only in a whitespace. Defenders must assume <em>any</em> attacker-observable difference
+      is an oracle.
+    </div>
+  </div>
+
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Endpoint (vulnerable)</h3>
+<pre>@app.route("/bsqli/l3/ping")
+def bsqli_l3_ping():
+    token = request.cookies.get("track", "")
+    sql = f"SELECT username FROM tracking WHERE token='{token}'"
+    rows = raw_execute(sql)
+    resp = make_response("", 204)
+    resp.headers["X-Status"] = "OK" if rows else "UNKNOWN"
+    return resp</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function doPing() {
+  const out = document.getElementById('pingOut');
+  out.textContent = '... pinging ...';
+  const r = await fetch('/bsqli/l3/ping', { credentials: 'include' });
+  out.textContent = 'HTTP ' + r.status
+    + '\n(X-Status readable only via Burp, not via fetch in-page)';
+}
+</script>
+{% endblock %}

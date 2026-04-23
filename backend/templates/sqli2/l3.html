@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}2nd-Order SQLi · Level 3{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">2nd Order SQLi</span>
+  <span class="crumb">Level 3 — Password Reset Flow</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 3 · Password Reset Flow</h1>
+  <div class="sub">
+    A typical "forgot password" flow: submit your e-mail, receive a token,
+    submit the token together with a new password. The e-mail you provide
+    is stored safely, but where is it <em>re-used</em>?
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-hard">hard</span>
+    <span class="pill">goal: reset admin's password without knowing their e-mail</span>
+    <span class="pill">burp: Repeater + session handling</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <div id="tab-challenge" class="tab-panel active">
+    <div class="grid-2">
+
+      <div class="card">
+        <h3>Step 1 · Request reset</h3>
+        <p class="muted">Provide an e-mail address. You'll get a reset token.</p>
+        <form method="POST" action="{{ url_for('sqli2_l3_request') }}">
+          <label>E-mail</label>
+          <input type="text" name="email" required>
+          <div style="margin-top:10px;"><button class="btn btn-primary">Send reset token</button></div>
+        </form>
+        {% if token %}
+          <p style="margin-top:10px;">Your current token: <code class="inline">{{ token }}</code></p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h3>Step 2 · Reset password</h3>
+        <form method="POST" action="{{ url_for('sqli2_l3_reset') }}">
+          <div class="form-row">
+            <div><label>Token</label><input type="text" name="token" value="{{ token or '' }}"></div>
+            <div><label>New password</label><input type="text" name="new_password"></div>
+          </div>
+          <button class="btn btn-primary">Reset password</button>
+        </form>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h3>Verification · Admin login</h3>
+        <form method="POST" action="{{ url_for('sqli2_l3_login') }}">
+          <div class="form-row">
+            <div><label>Username</label><input type="text" name="username" value="admin"></div>
+            <div><label>Password</label><input type="text" name="password"></div>
+            <div style="flex:0;"><button class="btn btn-primary">Login as admin</button></div>
+          </div>
+        </form>
+        {% if flag %}
+          <div class="flag-box">
+            <div class="label">Admin private note</div>
+            <div class="val">{{ flag }}</div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Model the flow on paper</h4>
+      Write down the data you control and where it lives:
+      <ol>
+        <li>You POST an <code class="inline">email</code>. Server saves <code class="inline">{email, token}</code>.</li>
+        <li>Server returns the token.</li>
+        <li>You POST <code class="inline">{token, new_password}</code>. Server looks up the stored e-mail by token, then applies the password to whatever user owns that e-mail.</li>
+      </ol>
+      The <em>second-order</em> sink is somewhere in step 3.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Ladder-probe the e-mail field</h4>
+      In step 1, submit progressively:
+      <ol>
+        <li>A normal e-mail such as <code class="inline">me@lab.test</code>.</li>
+        <li>One with a single quote: <code class="inline">me'@lab.test</code>.</li>
+        <li>One with double single quotes: <code class="inline">me''@lab.test</code>.</li>
+      </ol>
+      Does step 1 ever error? (It won't — it's parameterised.) The store is silent. The breakage must
+      come later.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Probe via step 3</h4>
+      Request a token for <code class="inline">me'@lab.test</code>, then in step 2 submit that token
+      with any new password. Observe the flash message. Is it generic-success, or is there an SQL error?
+      <details class="hint"><summary>💡 what are we hoping to see?</summary>
+        <div>An SQL error at step 3 strongly implies the server interpolates the stored e-mail into a new
+        query — exactly the second-order pattern.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Deduce the query shape</h4>
+      If the reset silently changes <em>your</em> password, the update is probably
+      <code class="inline">UPDATE users SET password='&lt;new&gt;' WHERE email='&lt;stored&gt;'</code>.
+      You control <code class="inline">&lt;stored&gt;</code> completely.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Design the predicate</h4>
+      You don't know admin's e-mail address, but you can shape the WHERE predicate to match any row
+      you like. Think of ways to make the predicate always true for the admin row and not match your
+      decoy e-mail at all.
+      <details class="hint"><summary>💡 predicate-rewriting hints</summary>
+        <div>
+          <ul>
+            <li>Terminate the string literal with a single quote.</li>
+            <li>Use <code class="inline">OR</code> with a condition that selects admin specifically — e.g. by <code class="inline">role</code>, <code class="inline">username</code> or <code class="inline">id</code>.</li>
+            <li>Discard the trailing quote with a comment sequence so the statement parses.</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Minimise blast radius</h4>
+      An all-true predicate would change <em>every</em> user's password. That's messy and detectable.
+      Target only admin. After your request token / reset pair, verify with the admin login form.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Execute</h4>
+      <ol>
+        <li>Request a token for your crafted e-mail.</li>
+        <li>Use the token to reset with a password you choose.</li>
+        <li>Login as admin to capture the flag in their private note.</li>
+      </ol>
+      If verification fails, inspect the request with Burp Repeater and consider whether quoting /
+      URL encoding of your payload mangled anything.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">08</span>Lesson</h4>
+      The safe INSERT turned the database into a trusted source of evil input. A defender must
+      either (a) parameterise <em>every</em> query (including the UPDATE), or (b) apply schema-level
+      validation (e.g. an e-mail regex CHECK) so hostile values never reach storage.
+    </div>
+  </div>
+
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Request (safe)</h3>
+<pre>cur.execute("INSERT INTO reset_tokens (email, token) VALUES (%s,%s)", (email, token))</pre>
+      <h3>Reset (vulnerable)</h3>
+<pre>row = query("SELECT email FROM reset_tokens WHERE token=%s AND used=0", (token,), one=True)
+stored_email = row["email"]
+sql = f"UPDATE users SET password='{new_pw}' WHERE email='{stored_email}'"
+raw_execute(sql)</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

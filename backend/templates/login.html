@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Login · WebSecLab{% endblock %}
+{% block breadcrumb %}<span class="crumb">Login</span>{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:460px;margin:40px auto;">
+  <h2>Sign in</h2>
+  <p class="muted">Use this only if a challenge page sends you here. Most challenges use their own scenario-specific login forms.</p>
+  <form method="POST">
+    <div class="form-row"><div>
+      <label>Username</label>
+      <input type="text" name="username" autofocus>
+    </div></div>
+    <div class="form-row"><div>
+      <label>Password</label>
+      <input type="password" name="password">
+    </div></div>
+    <button class="btn btn-primary" type="submit">Sign in</button>
+    {% if error %}<div class="flash flash-error" style="margin-top:10px;">{{ error }}</div>{% endif %}
+  </form>
+</div>
+{% endblock %}

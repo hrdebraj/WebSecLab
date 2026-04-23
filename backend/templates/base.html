@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+   __        __   _    ____            _          _
+   \ \      / /__| |__/ ___|  ___  ___| |    __ _| |__
+    \ \ /\ / / _ \ '_ \___ \ / _ \/ __| |   / _` | '_ \
+     \ V  V /  __/ |_) |__) |  __/ (__| |__| (_| | |_) |
+      \_/\_/ \___|_.__/____/ \___|\___|_____\__,_|_.__/
+
+   crafted with <3 by Debraj · happy hacking, students!
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}WebSecLab{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='10' y='80' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="brand">
+    <a href="{{ url_for('home') }}">
+      <span class="brand-logo">&lt;/&gt;</span>
+      <span class="brand-text">WebSec<span>Lab</span></span>
+    </a>
+    <div class="brand-sub">Hands-on Attack Arena</div>
+  </div>
+
+  <nav class="menu">
+    {% for cat in MENU %}
+    <div class="menu-cat">
+      <div class="menu-cat-title">{{ cat.title }}</div>
+      {% for lvl in cat.levels %}
+        {% set endpoint = cat.id ~ '_' ~ lvl.id %}
+        <a href="{{ url_for(endpoint) }}"
+           class="menu-item {% if request.endpoint == endpoint %}active{% endif %}">
+          <span class="dot dot-{{ lvl.difficulty }}"></span>
+          <span class="menu-item-title">{{ lvl.title }}</span>
+          <span class="badge badge-{{ lvl.difficulty }}">{{ lvl.difficulty }}</span>
+        </a>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </nav>
+
+  <form class="reset-form" action="{{ url_for('reset_lab') }}" method="POST">
+    <button type="submit" class="btn btn-ghost btn-sm" title="Re-seed users + comments">
+      ⟳ Reset Lab Data
+    </button>
+  </form>
+
+  <div class="sidebar-footer">
+    <div class="danger-note">⚠ Intentionally vulnerable</div>
+    <div class="signature">
+      <span class="sig-line">crafted&nbsp;with</span>
+      <span class="sig-heart" aria-label="love">❤</span>
+      <span class="sig-line">by</span>
+      <a class="sig-name" href="https://github.com/debraj" target="_blank" rel="noopener">
+        <span class="sig-bracket">&lt;</span>Debraj<span class="sig-cursor">/&gt;</span>
+      </a>
+    </div>
+  </div>
+</aside>
+
+<main class="main">
+  <header class="topbar">
+    <div class="topbar-left">
+      {% block breadcrumb %}<span class="crumb">Home</span>{% endblock %}
+    </div>
+    <div class="topbar-right">
+      <span class="pill">Proxy via Burp @ 127.0.0.1:8080</span>
+      {% if current_user %}
+        <span class="pill pill-green">logged in: {{ current_user.username }}</span>
+        <a href="{{ url_for('logout') }}" class="btn btn-sm">Logout</a>
+      {% endif %}
+    </div>
+  </header>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-wrap">
+        {% for cat, msg in messages %}
+          <div class="flash flash-{{ cat }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="content">
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

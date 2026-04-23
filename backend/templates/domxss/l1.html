@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}DOM XSS · Level 1{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">DOM XSS</span>
+  <span class="crumb">Level 1 — URL Hash Sink</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 1 · URL Hash Sink</h1>
+  <div class="sub">
+    A "sticky note" widget reads <code class="inline">location.hash</code> and renders it as HTML.
+    The server never sees what's after <code class="inline">#</code>, so this is 100% client-side.
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-easy">easy</span>
+    <span class="pill">goal: execute arbitrary JS, trigger <code class="inline">alert(window.FLAG)</code></span>
+    <span class="pill">tool: Burp DOM Invader helpful</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <div id="tab-challenge" class="tab-panel active">
+
+    <div class="card">
+      <h3>Sticky note widget</h3>
+      <p class="muted">Append your note after the <code class="inline">#</code> in the URL and press Enter.
+      The widget renders it below. Example:
+      <code class="inline">/domxss/l1#Hello%20world</code></p>
+      <div style="border:1px dashed var(--line);padding:14px;border-radius:8px;background:var(--bg-0);">
+        <div style="color:var(--text-dim);font-size:12px;">Your note:</div>
+        <div id="noteOut" style="margin-top:6px;font-family:var(--mono);min-height:26px;"></div>
+      </div>
+      <p class="muted" style="margin-top:8px;">
+        When a successful XSS executes with access to <code class="inline">window.FLAG</code>, the lab
+        will show you the flag.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>Quick links for testing</h3>
+      <p class="muted">Try these to see benign behaviour before you attack:</p>
+      <ul>
+        <li><a href="{{ url_for('domxss_l1') }}#hello">#hello</a></li>
+        <li><a href="{{ url_for('domxss_l1') }}#%3Cb%3Ebold%3C%2Fb%3E">#&lt;b&gt;bold&lt;/b&gt;</a></li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Confirm the sink</h4>
+      Open DevTools → Sources. Find the inline script on this page. Identify which API is used to
+      insert the hash content into the DOM.
+      <details class="hint"><summary>💡 what to look for</summary>
+        <div>The dangerous DOM sinks to know by heart: <code class="inline">innerHTML</code>,
+        <code class="inline">outerHTML</code>, <code class="inline">document.write</code>,
+        <code class="inline">eval</code>, <code class="inline">setTimeout(str)</code>,
+        <code class="inline">element.setAttribute('on*', ...)</code>, and jQuery's
+        <code class="inline">$()</code> when passed user HTML.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Show that HTML gets rendered</h4>
+      Navigate to <code class="inline">/domxss/l1#&lt;b&gt;hi&lt;/b&gt;</code> (url-encode or just type it).
+      If you see bold text, the sink is definitely <code class="inline">innerHTML</code>-family.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Try the obvious (and watch it fail)</h4>
+      Now try <code class="inline">#&lt;script&gt;alert(1)&lt;/script&gt;</code>. It won't fire.
+      This is <strong>not</strong> a filter — it's a browser behaviour: &lt;script&gt; tags inserted
+      via <code class="inline">innerHTML</code> are parsed but <em>never executed</em>.
+      <details class="hint"><summary>💡 browser spec quirk</summary>
+        <div>Per HTML spec, script elements inserted via <code class="inline">innerHTML</code> do not
+        execute. This is why DOM XSS payloads nearly always use <strong>event-handler attributes</strong>
+        on auto-loading elements.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Pick an element that loads immediately</h4>
+      Which HTML elements automatically trigger a load (and therefore <code class="inline">onload</code>
+      or <code class="inline">onerror</code>) the instant they're inserted into the DOM?
+      <ul>
+        <li>Images with a broken <code class="inline">src</code></li>
+        <li>SVG elements</li>
+        <li>Iframes</li>
+        <li>Video / audio with <code class="inline">onerror</code></li>
+      </ul>
+      Choose one and craft a minimal payload that runs <code class="inline">alert(1)</code>.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Graduate from PoC to flag capture</h4>
+      The page exposes <code class="inline">window.FLAG</code> only after an XSS handler fires.
+      Replace <code class="inline">alert(1)</code> with <code class="inline">alert(window.FLAG)</code>
+      (or render the flag into the page). When your payload executes, a flag card will appear.
+      <details class="hint"><summary>💡 URL encoding</summary>
+        <div>Browsers decode <code class="inline">%XX</code> in the URL before exposing it to JS. You
+        can write the payload literally in the hash bar or URL-encode unsafe characters.
+        <code class="inline">#</code> itself must not appear inside the payload or it will be truncated.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Use Burp DOM Invader</h4>
+      If you have Burp's Chromium browser, open DOM Invader. It will highlight the sink and
+      the source (<code class="inline">location.hash</code>) and can auto-suggest exploit shapes.
+      Compare with your hand-crafted attack.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Reflection</h4>
+      How would you fix this while keeping the feature? Consider <code class="inline">textContent</code>,
+      <code class="inline">DOMPurify</code>, or an allow-list of tags with no event handlers.
+    </div>
+  </div>
+
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Vulnerable script (inline on this page)</h3>
+<pre>function render() {
+  var raw = decodeURIComponent(location.hash.slice(1));
+  document.getElementById('noteOut').innerHTML = raw;   // &lt;- sink
+}
+window.addEventListener('hashchange', render);
+render();</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Flag reveal helper
+window.FLAG = "FLAG{dom_xss_hash_sink}";
+window.revealFlag = function () {
+  if (document.getElementById('flagBox')) return;
+  const box = document.createElement('div');
+  box.id = 'flagBox';
+  box.className = 'flag-box';
+  box.innerHTML = '<div class="label">Captured flag</div><div class="val">'
+    + window.FLAG.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</div>';
+  document.querySelector('.content').appendChild(box);
+};
+
+// ---- INTENTIONALLY VULNERABLE SINK ----
+function render() {
+  var raw = decodeURIComponent(location.hash.slice(1));
+  var el = document.getElementById('noteOut');
+  if (el) el.innerHTML = raw;   // DOM XSS sink
+}
+window.addEventListener('hashchange', render);
+render();
+
+// Small convenience: if the injected payload does `revealFlag()`, show it.
+</script>
+{% endblock %}

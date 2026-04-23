@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}2nd-Order SQLi · Level 1{% endblock %}
+{% block breadcrumb %}
+  <span class="crumb">2nd Order SQLi</span>
+  <span class="crumb">Level 1 — Profile Password Change</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Level 1 · Profile Password Change</h1>
+  <div class="sub">
+    A tiny social-account portal. Register, then change your password.
+    Somewhere inside, user-supplied data is stored safely but <em>re-used unsafely later</em>.
+  </div>
+  <div class="hint-row">
+    <span class="badge badge-easy">easy</span>
+    <span class="pill">goal: hijack admin account</span>
+    <span class="pill">burp: Repeater</span>
+  </div>
+</div>
+
+<div class="tabs-container">
+  <div class="tabs">
+    <div class="tab active" data-target="tab-challenge">Challenge</div>
+    <div class="tab" data-target="tab-walk">Walkthrough</div>
+    <div class="tab" data-target="tab-src">Source (relevant)</div>
+  </div>
+
+  <!-- CHALLENGE ------------------------------------------------------- -->
+  <div id="tab-challenge" class="tab-panel active">
+    <div class="grid-2">
+
+      <div class="card">
+        <h3>Step 1 · Register</h3>
+        <p class="muted">Create a brand-new account. Pick any username and password.</p>
+        <form method="POST" action="{{ url_for('sqli2_l1_register') }}">
+          <div class="form-row">
+            <div><label>Username</label><input type="text" name="username" required></div>
+            <div><label>Password</label><input type="text" name="password" required></div>
+          </div>
+          <button class="btn btn-primary">Register &amp; log in</button>
+        </form>
+        {% if session.get('sqli2_l1_user') %}
+          <p style="margin-top:10px;color:var(--green);">
+            Active scenario user: <code class="inline">{{ session.get('sqli2_l1_user') }}</code>
+          </p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <h3>Step 2 · Change password</h3>
+        <p class="muted">Logged-in users may update their own password here.</p>
+        <form method="POST" action="{{ url_for('sqli2_l1_change_password') }}">
+          <label>New password</label>
+          <input type="text" name="new_password" required>
+          <div style="margin-top:12px;">
+            <button class="btn btn-primary">Update password</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h3>Verification · Admin login</h3>
+        <p class="muted">
+          When you think you have taken over the <code class="inline">admin</code> account,
+          authenticate here to capture the flag from their private note.
+        </p>
+        <form method="POST" action="{{ url_for('sqli2_l1_login') }}">
+          <div class="form-row">
+            <div><label>Username</label><input type="text" name="username" value="admin"></div>
+            <div><label>Password</label><input type="text" name="password"></div>
+            <div style="flex:0;"><button class="btn btn-primary">Login as admin</button></div>
+          </div>
+        </form>
+        {% if flag %}
+        <div class="flag-box">
+          <div class="label">Admin private note</div>
+          <div class="val">{{ flag }}</div>
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+
+  <!-- WALKTHROUGH ------------------------------------------------------ -->
+  <div id="tab-walk" class="tab-panel walkthrough">
+
+    <div class="step">
+      <h4><span class="num">01</span>Understand the flow</h4>
+      There are <strong>two endpoints</strong> here that handle your input:
+      <code class="inline">/register</code> stores it, and <code class="inline">/change-password</code>
+      later uses it. In a classic 1st-order SQLi, the same request that carries the payload
+      is also the one that runs the injected SQL. What makes this a <em>second-order</em>
+      vulnerability? Think about where input goes <strong>first</strong> and where it is
+      <strong>re-used</strong> later.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">02</span>Probe registration first</h4>
+      Register an ordinary account (e.g. <code class="inline">test</code> / <code class="inline">test</code>).
+      In Burp <em>Proxy → HTTP history</em>, inspect the request. Does registration echo anything
+      back? Does it error on special characters? Try registering a username containing a single
+      quote <code class="inline">'</code>.
+      <details class="hint"><summary>💡 what should I observe?</summary>
+        <div>Registration is likely using a <em>safe</em> prepared statement. The single quote is
+        stored verbatim. That means the username field can hold SQL metacharacters as pure data — which
+        is fine, until someone interpolates it into a new query.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">03</span>Attack surface = the second query</h4>
+      Change your password. In Burp, inspect the request to <code class="inline">/change-password</code>.
+      Notice how the server doesn't ask you for a username — it trusts the one you registered with.
+      That username is fetched from the session and pasted into a new query.
+      <details class="hint"><summary>💡 the likely query shape</summary>
+        <div><code class="inline">UPDATE users SET password='&lt;new_password&gt;' WHERE username='&lt;stored_username&gt;'</code></div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">04</span>Ladder the injection</h4>
+      Before going for the kill, verify the injection point step-by-step.
+      Register a user whose name contains a single quote, e.g. <code class="inline">a'</code>.
+      Log in? — you can't, because the app logs you in automatically at registration.
+      Now trigger <em>change password</em> — does the app error?
+      That error (or lack of one) tells you the username is being concatenated.
+      <details class="hint"><summary>💡 lad­dering technique</summary>
+        <div>
+          Classic probing order when you suspect string-context SQLi:
+          <ol>
+            <li>Baseline — input without any metacharacter → works.</li>
+            <li>Single quote <code class="inline">'</code> → error or different behaviour.</li>
+            <li>Two single quotes <code class="inline">''</code> → works again (escaped).</li>
+            <li>This confirms the input lands inside a quoted string literal.</li>
+          </ol>
+        </div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">05</span>Reason about the WHERE clause</h4>
+      You control the value between the quotes in <code class="inline">WHERE username='&lt;here&gt;'</code>.
+      What would you need to inject so that the UPDATE affects <code class="inline">admin</code>
+      instead of your user? Remember you set your <em>registered</em> username once, forever, at step 02.
+      <details class="hint"><summary>💡 shape of payload (no final answer)</summary>
+        <div>Your stored username must terminate the string literal, then change the WHERE predicate
+        so that the row matched is admin's. A single-line SQL comment (<code class="inline">--</code>
+        followed by a space, or <code class="inline">#</code>) can help you discard the trailing
+        quote that the server will append.</div>
+      </details>
+    </div>
+
+    <div class="step">
+      <h4><span class="num">06</span>Pre-flight check</h4>
+      Use the Reset Lab button (sidebar) to clear any failed attempts before your final run.
+      Then: (a) register with your crafted username + a throwaway password, (b) change password
+      with the new admin password you want, (c) go to the verification form and log in as
+      <code class="inline">admin</code> using your chosen password.
+    </div>
+
+    <div class="step">
+      <h4><span class="num">07</span>Post-exploitation reflection</h4>
+      Why did a <em>safe</em> parameterised INSERT not protect the application? Write down two
+      mitigations you would apply. Hint: parameterisation is about the <strong>query</strong>,
+      not about the <strong>data</strong>. Defensive measures must follow the data wherever it
+      is re-used.
+    </div>
+  </div>
+
+  <!-- SOURCE ---------------------------------------------------------- -->
+  <div id="tab-src" class="tab-panel">
+    <div class="card">
+      <h3>Registration handler (safe)</h3>
+<pre>cur.execute("INSERT INTO users (username, password, role) VALUES (%s,%s,'user')",
+            (username, password))</pre>
+      <h3>Change-password handler (vulnerable)</h3>
+<pre>stored_user = session["sqli2_l1_user"]   # from registration
+sql = f"UPDATE users SET password='{new_pw}' WHERE username='{stored_user}'"
+raw_execute(sql)</pre>
+      <p class="muted">The defect: <code class="inline">stored_user</code> is treated as trusted
+      internal data, but it originated from the attacker.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
