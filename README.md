@@ -162,10 +162,4 @@ To add a new level:
 3. Register the level in `MENU` at the top of `app.py`
 4. (Optional) seed extra tables in `db/init.sql`
 
-## 11. Safety checklist before class
 
-- [ ] Host firewall blocks inbound on `8080` from the wider network
-- [ ] Instructor ran `docker compose down -v && docker compose up --build`
-      so volumes are clean
-- [ ] Students have Burp configured (Option A above)
-- [ ] Workshop wifi is isolated from corporate LAN
