@@ -9,6 +9,9 @@ three modern web-attack categories:
 | Blind SQL Injection     |   3    | Boolean / time / header oracles                    |
 | DOM-based XSS           |   3    | Client-side sinks, filter bypass, allow-list break |
 
+<img width="1247" height="853" alt="image" src="https://github.com/user-attachments/assets/95a7905a-04f4-4ef2-b0c3-5a10cd5de9ee" />
+
+
 Each challenge page has four panels:
 
 1. **Challenge** – the interactive vulnerable UI
